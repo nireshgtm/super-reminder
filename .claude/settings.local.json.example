@@ -1,0 +1,16 @@
+{
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://your-gateway-or-api.anthropic.com",
+    "ANTHROPIC_API_KEY": "sk-your-api-key-here",
+    "ANTHROPIC_MODEL": "claude-sonnet-4-6"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(npm test *)",
+      "Bash(npm install *)",
+      "Bash(node *)",
+      "Bash(git *)"
+    ]
+  },
+  "model": "claude-sonnet-4-6"
+}

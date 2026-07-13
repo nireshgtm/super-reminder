@@ -44,5 +44,7 @@ yarn-error.log*
 # EAS local build artifacts
 .eas/
 
-# Claude Code local settings
-.claude/
+# Claude Code local settings (keep real settings private, track only examples)
+.claude/settings.local.json
+.claude/plans/
+.claude/worktrees/
