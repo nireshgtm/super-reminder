@@ -7,6 +7,7 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
     "splash": {
+      "image": "./assets/splash.png",
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
@@ -15,12 +16,16 @@
       "bundleIdentifier": "com.superreminder.app",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "Super Reminder uses text-to-speech to read your reminders aloud.",
-        "NSSpeechRecognitionUsageDescription": "Super Reminder uses on-device speech synthesis only."
+        "NSSpeechRecognitionUsageDescription": "Super Reminder uses on-device speech synthesis only.",
+        "UIBackgroundModes": [
+          "audio"
+        ]
       }
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#ffffff"
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#4B2FBA"
       },
       "package": "com.superreminder.app",
       "permissions": [
@@ -28,21 +33,19 @@
         "android.permission.SCHEDULE_EXACT_ALARM",
         "android.permission.USE_EXACT_ALARM",
         "android.permission.POST_NOTIFICATIONS",
-        "android.permission.VIBRATE"
+        "android.permission.VIBRATE",
+        "android.permission.FOREGROUND_SERVICE"
       ]
     },
     "plugins": [
-      [
-        "expo-notifications",
-        {
-          "icon": "./assets/icon.png",
-          "color": "#007AFF",
-          "iosDisplayInForeground": true,
-          "androidMode": "default"
-        }
-      ],
       "expo-router",
-      "expo-secure-store"
+      "expo-secure-store",
+      ["expo-build-properties", {
+        "android": {
+          "enableProguardInReleaseBuilds": true,
+          "enableShrinkResourcesInReleaseBuilds": true
+        }
+      }]
     ],
     "scheme": "super-reminder",
     "experiments": {

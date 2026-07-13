@@ -8,5 +8,11 @@ export interface Reminder {
   recurrence: RecurrenceConfig;
   /** undefined = use the global default voice. */
   voiceIdentifier?: string;
+  /** Times to repeat TTS. 1–5; undefined treated as 1. */
+  repeatCount?: number;
+  /** TTS speech rate. 0.5–2.0; undefined treated as 1.0. */
+  rate?: number;
+  /** TTS pitch. 0.5–2.0; undefined treated as 1.0. */
+  pitch?: number;
   // text is NOT stored here — it lives in SecureStore only.
 }

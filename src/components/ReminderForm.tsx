@@ -16,15 +16,17 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import * as Speech from 'expo-speech';
+import * as IntentLauncher from 'expo-intent-launcher';
 
 import { DayOfWeekPicker } from './DayOfWeekPicker';
-import { TimeRangePicker } from './TimeRangePicker';
+import { TimeRangePicker, TimeSpinner } from './TimeRangePicker';
 import { useVoices } from '../hooks/useVoices';
 import { setText } from '../services/secureStore';
 import { insertReminder, updateReminder, getAllReminders } from '../services/db';
 import { rescheduleAll } from '../services/notificationScheduler';
 import type { Reminder } from '../models/Reminder';
-import type { RecurrenceConfig } from '../models/RecurrenceConfig';
+import type { RecurrenceConfig, RecurringConfig } from '../models/RecurrenceConfig';
+import { isOnceConfig } from '../models/RecurrenceConfig';
 import type { Weekday } from '../models/Weekday';
 
 const MAX_TEXT_LENGTH = 500;
@@ -57,6 +59,16 @@ function msToDate(ms: number): DateValue {
 function todayDate(): DateValue {
   const d = new Date();
   return { year: d.getFullYear(), month: d.getMonth() + 1, day: d.getDate() };
+}
+
+function tomorrowDate(): DateValue {
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  return { year: d.getFullYear(), month: d.getMonth() + 1, day: d.getDate() };
+}
+
+function dateTimeToMs(d: DateValue, t: { hour: number; minute: number }): number {
+  return new Date(d.year, d.month - 1, d.day, t.hour, t.minute, 0, 0).getTime();
 }
 
 const MONTH_NAMES = [
@@ -143,7 +155,7 @@ const dateStyles = StyleSheet.create({
 
 // ─── Default recurrence ───────────────────────────────────────────────────────
 
-const DEFAULT_RECURRENCE: RecurrenceConfig = {
+const DEFAULT_RECURRENCE: RecurringConfig = {
   intervalValue: 30,
   intervalUnit: 'minutes',
   windowStartHour: 9,
@@ -166,32 +178,60 @@ export function ReminderForm({ existing }: ReminderFormProps) {
   const { voices, isLoading: voicesLoading } = useVoices();
 
   // ── Form state ──────────────────────────────────────────────────────────────
+  const existingIsOnce = existing ? isOnceConfig(existing.recurrence) : false;
+  const existingRecurring = existing && !existingIsOnce
+    ? (existing.recurrence as RecurringConfig)
+    : undefined;
+
+  const [mode, setMode] = useState<'recurring' | 'once'>(
+    existingIsOnce ? 'once' : 'recurring',
+  );
   const [text, setText_] = useState(existing?.text ?? '');
-  const [recurrence, setRecurrence] = useState<RecurrenceConfig>(
-    existing?.recurrence ?? DEFAULT_RECURRENCE,
+  const [recurrence, setRecurrence] = useState<RecurringConfig>(
+    existingRecurring ?? DEFAULT_RECURRENCE,
   );
   const [voiceIdentifier, setVoiceIdentifier] = useState<string | undefined>(
     existing?.voiceIdentifier,
   );
   const [intervalText, setIntervalText] = useState(
-    String(existing?.recurrence?.intervalValue ?? 30),
+    String(existingRecurring?.intervalValue ?? 30),
   );
   const [dateFrom, setDateFrom] = useState<DateValue>(
-    existing?.recurrence?.dateFrom
-      ? msToDate(existing.recurrence.dateFrom)
+    existingRecurring?.dateFrom
+      ? msToDate(existingRecurring.dateFrom)
       : todayDate(),
   );
   const [dateTo, setDateTo] = useState<DateValue>(
-    existing?.recurrence?.dateTo
-      ? msToDate(existing.recurrence.dateTo)
+    existingRecurring?.dateTo
+      ? msToDate(existingRecurring.dateTo)
       : todayDate(),
   );
+
+  // One-time fire date/time state
+  const existingOnceFireAt = existingIsOnce && existing
+    ? (existing.recurrence as { type: 'once'; fireAt: number }).fireAt
+    : undefined;
+  const [onceDate, setOnceDate] = useState<DateValue>(
+    existingOnceFireAt ? msToDate(existingOnceFireAt) : tomorrowDate(),
+  );
+  const [onceTime, setOnceTime] = useState<{ hour: number; minute: number }>(
+    existingOnceFireAt
+      ? (() => {
+          const d = new Date(existingOnceFireAt);
+          return { hour: d.getHours(), minute: d.getMinutes() };
+        })()
+      : { hour: 9, minute: 0 },
+  );
+  const [repeatCount, setRepeatCount] = useState(existing?.repeatCount ?? 1);
+  const [speechRate, setSpeechRate] = useState(existing?.rate ?? 1.0);
+  const [speechPitch, setSpeechPitch] = useState(existing?.pitch ?? 1.0);
   const [saving, setSaving] = useState(false);
+  const [sttLoading, setSttLoading] = useState(false);
   const [voiceModalVisible, setVoiceModalVisible] = useState(false);
 
   // ── Helpers ─────────────────────────────────────────────────────────────────
 
-  function updateRecurrence(patch: Partial<RecurrenceConfig>) {
+  function updateRecurrence(patch: Partial<RecurringConfig>) {
     setRecurrence((prev) => ({ ...prev, ...patch }));
   }
 
@@ -240,6 +280,12 @@ export function ReminderForm({ existing }: ReminderFormProps) {
     if (text.length > MAX_TEXT_LENGTH)
       return `Text must be ${MAX_TEXT_LENGTH} characters or fewer.`;
 
+    if (mode === 'once') {
+      if (dateTimeToMs(onceDate, onceTime) <= Date.now())
+        return 'Fire time must be in the future.';
+      return null;
+    }
+
     const iv = parseInt(intervalText, 10);
     if (isNaN(iv) || iv <= 0) return 'Interval must be a positive number.';
 
@@ -262,6 +308,24 @@ export function ReminderForm({ existing }: ReminderFormProps) {
     return null;
   }
 
+  // ── STT (Android) ────────────────────────────────────────────────────────
+
+  async function handleMicPress() {
+    setSttLoading(true);
+    try {
+      const result = await IntentLauncher.startActivityAsync(
+        'android.speech.action.RECOGNIZE_SPEECH',
+        { extra: { 'android.speech.extra.LANGUAGE_MODEL': 'free_form' } },
+      );
+      const spoken = result.extra?.['android.speech.extra.RESULTS']?.[0] as string | undefined;
+      if (spoken) setText_(spoken.slice(0, MAX_TEXT_LENGTH));
+    } catch {
+      Alert.alert('Speech not available', 'Speech recognition is not available on this device.');
+    } finally {
+      setSttLoading(false);
+    }
+  }
+
   // ── Save ────────────────────────────────────────────────────────────────────
 
   async function handleSave() {
@@ -272,19 +336,26 @@ export function ReminderForm({ existing }: ReminderFormProps) {
     }
 
     setSaving(true);
+
+    // ── Step 1: persist the reminder (must succeed) ──────────────────────────
     try {
-      const finalRecurrence: RecurrenceConfig = {
-        ...recurrence,
-        intervalValue: parseInt(intervalText, 10),
-        dateFrom: recurrence.dateRangeEnabled ? dateToMs(dateFrom) : undefined,
-        dateTo: recurrence.dateRangeEnabled ? dateToMs(dateTo) : undefined,
-      };
+      const finalRecurrence: RecurrenceConfig = mode === 'once'
+        ? { type: 'once', fireAt: dateTimeToMs(onceDate, onceTime) }
+        : {
+            ...recurrence,
+            intervalValue: parseInt(intervalText, 10),
+            dateFrom: recurrence.dateRangeEnabled ? dateToMs(dateFrom) : undefined,
+            dateTo: recurrence.dateRangeEnabled ? dateToMs(dateTo) : undefined,
+          };
 
       if (existing) {
         const updated: Reminder = {
           ...existing,
           recurrence: finalRecurrence,
           voiceIdentifier: voiceIdentifier ?? undefined,
+          repeatCount,
+          rate: speechRate,
+          pitch: speechPitch,
         };
         await setText(existing.id, text.trim());
         await updateReminder(updated);
@@ -296,20 +367,30 @@ export function ReminderForm({ existing }: ReminderFormProps) {
           isEnabled: true,
           recurrence: finalRecurrence,
           voiceIdentifier: voiceIdentifier ?? undefined,
+          repeatCount,
+          rate: speechRate,
+          pitch: speechPitch,
         };
         await setText(id, text.trim());
         await insertReminder(reminder);
       }
+    } catch (e) {
+      console.error('ReminderForm: save failed', e);
+      Alert.alert('Error', 'Could not save reminder. Please try again.');
+      setSaving(false);
+      return;
+    }
 
+    // ── Step 2: reschedule (best-effort — never blocks navigation) ───────────
+    try {
       const all = await getAllReminders();
       await rescheduleAll(all);
-
-      router.back();
     } catch (e) {
-      Alert.alert('Error', 'Could not save reminder. Please try again.');
-    } finally {
-      setSaving(false);
+      console.error('ReminderForm: reschedule failed (non-fatal)', e);
     }
+
+    setSaving(false);
+    router.back();
   }
 
   // ── Voice selected label ────────────────────────────────────────────────────
@@ -345,111 +426,181 @@ export function ReminderForm({ existing }: ReminderFormProps) {
             blurOnSubmit
             accessibilityLabel="Reminder text"
           />
-          <Text style={styles.charCount}>
-            {text.length} / {MAX_TEXT_LENGTH}
-          </Text>
-        </Section>
-
-        {/* ── Interval ── */}
-        <Section title="Repeat Interval">
-          <View style={styles.intervalRow}>
-            <Text style={styles.intervalLabel}>Every</Text>
-            <TextInput
-              style={styles.intervalInput}
-              value={intervalText}
-              onChangeText={handleIntervalChange}
-              keyboardType="number-pad"
-              maxLength={4}
-              selectTextOnFocus
-              accessibilityLabel="Interval value"
-            />
-            <View style={styles.unitToggle}>
+          <View style={styles.textFooter}>
+            {Platform.OS === 'android' && (
               <Pressable
-                style={[
-                  styles.unitBtn,
-                  recurrence.intervalUnit === 'minutes' && styles.unitBtnActive,
+                style={({ pressed }) => [
+                  styles.micBtn,
+                  pressed && styles.micBtnPressed,
+                  sttLoading && styles.micBtnDisabled,
                 ]}
-                onPress={() => updateRecurrence({ intervalUnit: 'minutes' })}
+                onPress={handleMicPress}
+                disabled={sttLoading}
+                accessibilityRole="button"
+                accessibilityLabel="Dictate reminder text"
               >
-                <Text
-                  style={[
-                    styles.unitBtnText,
-                    recurrence.intervalUnit === 'minutes' &&
-                      styles.unitBtnTextActive,
-                  ]}
-                >
-                  min
-                </Text>
+                {sttLoading ? (
+                  <ActivityIndicator size="small" color="#007AFF" />
+                ) : (
+                  <Text style={styles.micIcon}>🎤</Text>
+                )}
               </Pressable>
-              <Pressable
-                style={[
-                  styles.unitBtn,
-                  recurrence.intervalUnit === 'hours' && styles.unitBtnActive,
-                ]}
-                onPress={() => updateRecurrence({ intervalUnit: 'hours' })}
-              >
-                <Text
-                  style={[
-                    styles.unitBtnText,
-                    recurrence.intervalUnit === 'hours' &&
-                      styles.unitBtnTextActive,
-                  ]}
-                >
-                  hr
-                </Text>
-              </Pressable>
-            </View>
+            )}
+            <Text style={styles.charCount}>
+              {text.length} / {MAX_TEXT_LENGTH}
+            </Text>
           </View>
         </Section>
 
-        {/* ── Daily window ── */}
-        <Section title="Daily Window">
-          <TimeRangePicker
-            startHour={recurrence.windowStartHour}
-            startMinute={recurrence.windowStartMinute}
-            endHour={recurrence.windowEndHour}
-            endMinute={recurrence.windowEndMinute}
-            onChange={handleTimeChange}
-          />
-        </Section>
-
-        {/* ── Days of week ── */}
-        <Section title="Active Days">
-          <DayOfWeekPicker
-            selected={recurrence.activeDays}
-            onChange={handleDaysChange}
-          />
-        </Section>
-
-        {/* ── Date range ── */}
-        <Section title="Date Range">
-          <View style={styles.toggleRow}>
-            <Text style={styles.toggleLabel}>Restrict to date range</Text>
-            <Switch
-              value={recurrence.dateRangeEnabled}
-              onValueChange={handleDateRangeToggle}
-              accessibilityLabel="Enable date range"
-            />
+        {/* ── Mode toggle ── */}
+        <Section title="Reminder Type">
+          <View style={styles.modeToggle}>
+            <Pressable
+              style={[styles.modeBtn, mode === 'once' && styles.modeBtnActive]}
+              onPress={() => setMode('once')}
+              accessibilityRole="radio"
+              accessibilityState={{ checked: mode === 'once' }}
+              accessibilityLabel="One-time reminder"
+            >
+              <Text style={[styles.modeBtnText, mode === 'once' && styles.modeBtnTextActive]}>
+                One-time
+              </Text>
+            </Pressable>
+            <Pressable
+              style={[styles.modeBtn, mode === 'recurring' && styles.modeBtnActive]}
+              onPress={() => setMode('recurring')}
+              accessibilityRole="radio"
+              accessibilityState={{ checked: mode === 'recurring' }}
+              accessibilityLabel="Recurring reminder"
+            >
+              <Text style={[styles.modeBtnText, mode === 'recurring' && styles.modeBtnTextActive]}>
+                Recurring
+              </Text>
+            </Pressable>
           </View>
-          {recurrence.dateRangeEnabled && (
-            <View style={styles.dateRangeRow}>
+        </Section>
+
+        {mode === 'once' ? (
+          /* ── One-time: date + time ── */
+          <Section title="Fire At">
+            <View style={styles.onceRow}>
               <DateSpinner
-                label="From"
-                value={dateFrom}
-                onChange={handleFromChange}
+                label="Date"
+                value={onceDate}
+                onChange={setOnceDate}
               />
-              <Text style={styles.dateRangeDash}>–</Text>
-              <DateSpinner
-                label="To"
-                value={dateTo}
-                onChange={handleToChange}
+              <Text style={styles.dateRangeDash}>·</Text>
+              <TimeSpinner
+                label="Time"
+                value={onceTime}
+                onChange={setOnceTime}
               />
             </View>
-          )}
-        </Section>
+          </Section>
+        ) : (
+          <>
+            {/* ── Interval ── */}
+            <Section title="Repeat Interval">
+              <View style={styles.intervalRow}>
+                <Text style={styles.intervalLabel}>Every</Text>
+                <TextInput
+                  style={styles.intervalInput}
+                  value={intervalText}
+                  onChangeText={handleIntervalChange}
+                  keyboardType="number-pad"
+                  maxLength={4}
+                  selectTextOnFocus
+                  accessibilityLabel="Interval value"
+                />
+                <View style={styles.unitToggle}>
+                  <Pressable
+                    style={[
+                      styles.unitBtn,
+                      recurrence.intervalUnit === 'minutes' && styles.unitBtnActive,
+                    ]}
+                    onPress={() => updateRecurrence({ intervalUnit: 'minutes' })}
+                  >
+                    <Text
+                      style={[
+                        styles.unitBtnText,
+                        recurrence.intervalUnit === 'minutes' &&
+                          styles.unitBtnTextActive,
+                      ]}
+                    >
+                      min
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    style={[
+                      styles.unitBtn,
+                      recurrence.intervalUnit === 'hours' && styles.unitBtnActive,
+                    ]}
+                    onPress={() => updateRecurrence({ intervalUnit: 'hours' })}
+                  >
+                    <Text
+                      style={[
+                        styles.unitBtnText,
+                        recurrence.intervalUnit === 'hours' &&
+                          styles.unitBtnTextActive,
+                      ]}
+                    >
+                      hr
+                    </Text>
+                  </Pressable>
+                </View>
+              </View>
+            </Section>
 
-        {/* ── Voice ── */}
-        <Section title="Voice">
+            {/* ── Daily window ── */}
+            <Section title="Daily Window">
+              <TimeRangePicker
+                startHour={recurrence.windowStartHour}
+                startMinute={recurrence.windowStartMinute}
+                endHour={recurrence.windowEndHour}
+                endMinute={recurrence.windowEndMinute}
+                onChange={handleTimeChange}
+              />
+            </Section>
+
+            {/* ── Days of week ── */}
+            <Section title="Active Days">
+              <DayOfWeekPicker
+                selected={recurrence.activeDays}
+                onChange={handleDaysChange}
+              />
+            </Section>
+
+            {/* ── Date range ── */}
+            <Section title="Date Range">
+              <View style={styles.toggleRow}>
+                <Text style={styles.toggleLabel}>Restrict to date range</Text>
+                <Switch
+                  value={recurrence.dateRangeEnabled}
+                  onValueChange={handleDateRangeToggle}
+                  accessibilityLabel="Enable date range"
+                />
+              </View>
+              {recurrence.dateRangeEnabled && (
+                <View style={styles.dateRangeRow}>
+                  <DateSpinner
+                    label="From"
+                    value={dateFrom}
+                    onChange={handleFromChange}
+                  />
+                  <Text style={styles.dateRangeDash}>–</Text>
+                  <DateSpinner
+                    label="To"
+                    value={dateTo}
+                    onChange={handleToChange}
+                  />
+                </View>
+              )}
+            </Section>
+          </>
+        )}
+
+        {/* ── Voice & Speech ── */}
+        <Section title="Voice & Speech">
           <Pressable
             style={styles.voiceButton}
             onPress={() => setVoiceModalVisible(true)}
@@ -459,6 +610,24 @@ export function ReminderForm({ existing }: ReminderFormProps) {
             <Text style={styles.voiceButtonText}>{selectedVoiceName}</Text>
             <Text style={styles.voiceChevron}>›</Text>
           </Pressable>
+          <Stepper
+            label="Repeat"
+            displayValue={String(repeatCount)}
+            onDecrement={() => setRepeatCount((n) => Math.max(1, n - 1))}
+            onIncrement={() => setRepeatCount((n) => Math.min(5, n + 1))}
+          />
+          <Stepper
+            label="Speed"
+            displayValue={`${speechRate.toFixed(1)}×`}
+            onDecrement={() => setSpeechRate((r) => Math.round(Math.max(0.5, r - 0.1) * 10) / 10)}
+            onIncrement={() => setSpeechRate((r) => Math.round(Math.min(2.0, r + 0.1) * 10) / 10)}
+          />
+          <Stepper
+            label="Pitch"
+            displayValue={speechPitch.toFixed(1)}
+            onDecrement={() => setSpeechPitch((p) => Math.round(Math.max(0.5, p - 0.1) * 10) / 10)}
+            onIncrement={() => setSpeechPitch((p) => Math.round(Math.min(2.0, p + 0.1) * 10) / 10)}
+          />
         </Section>
 
         {/* ── Save / Cancel ── */}
@@ -594,6 +763,45 @@ function Section({
   );
 }
 
+// ─── Stepper ──────────────────────────────────────────────────────────────────
+
+function Stepper({
+  label,
+  displayValue,
+  onDecrement,
+  onIncrement,
+}: {
+  label: string;
+  displayValue: string;
+  onDecrement: () => void;
+  onIncrement: () => void;
+}) {
+  return (
+    <View style={styles.stepperRow}>
+      <Text style={styles.stepperLabel}>{label}</Text>
+      <View style={styles.stepperControls}>
+        <Pressable
+          style={({ pressed }) => [styles.stepperBtn, pressed && styles.stepperBtnPressed]}
+          onPress={onDecrement}
+          accessibilityRole="button"
+          accessibilityLabel={`Decrease ${label}`}
+        >
+          <Text style={styles.stepperBtnText}>−</Text>
+        </Pressable>
+        <Text style={styles.stepperValue}>{displayValue}</Text>
+        <Pressable
+          style={({ pressed }) => [styles.stepperBtn, pressed && styles.stepperBtnPressed]}
+          onPress={onIncrement}
+          accessibilityRole="button"
+          accessibilityLabel={`Increase ${label}`}
+        >
+          <Text style={styles.stepperBtnText}>+</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
 // ─── UUID ─────────────────────────────────────────────────────────────────────
 
 function generateId(): string {
@@ -631,6 +839,39 @@ const styles = StyleSheet.create({
     gap: 12,
   },
 
+  modeToggle: {
+    flexDirection: 'row',
+    borderRadius: 8,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#007AFF',
+    alignSelf: 'stretch',
+  },
+  modeBtn: {
+    flex: 1,
+    paddingVertical: 8,
+    alignItems: 'center',
+    backgroundColor: '#fff',
+  },
+  modeBtnActive: {
+    backgroundColor: '#007AFF',
+  },
+  modeBtnText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#007AFF',
+  },
+  modeBtnTextActive: {
+    color: '#fff',
+  },
+
+  onceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+  },
+
   textInput: {
     fontSize: 16,
     color: '#1C1C1E',
@@ -638,10 +879,29 @@ const styles = StyleSheet.create({
     textAlignVertical: 'top',
     lineHeight: 22,
   },
+  textFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
   charCount: {
+    flex: 1,
     fontSize: 12,
     color: '#C7C7CC',
     textAlign: 'right',
+  },
+  micBtn: {
+    padding: 6,
+    borderRadius: 8,
+    backgroundColor: '#EBF3FF',
+  },
+  micBtnPressed: {
+    backgroundColor: '#D6E8FF',
+  },
+  micBtnDisabled: {
+    opacity: 0.5,
+  },
+  micIcon: {
+    fontSize: 18,
   },
 
   intervalRow: {
@@ -810,5 +1070,44 @@ const styles = StyleSheet.create({
     height: StyleSheet.hairlineWidth,
     backgroundColor: '#E5E5EA',
     marginLeft: 16,
+  },
+
+  stepperRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  stepperLabel: {
+    fontSize: 15,
+    color: '#1C1C1E',
+  },
+  stepperControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  stepperBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 8,
+    backgroundColor: '#EBF3FF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stepperBtnPressed: {
+    backgroundColor: '#D6E8FF',
+  },
+  stepperBtnText: {
+    fontSize: 20,
+    color: '#007AFF',
+    fontWeight: '500',
+    lineHeight: 24,
+  },
+  stepperValue: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#1C1C1E',
+    minWidth: 48,
+    textAlign: 'center',
   },
 });

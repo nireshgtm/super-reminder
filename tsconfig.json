@@ -14,5 +14,9 @@
     ".expo/types/**/*.d.ts",
     "expo-env.d.ts",
     ".expo/types/**/*.ts"
+  ],
+  "exclude": [
+    "src/__tests__",
+    "src/__mocks__"
   ]
 }

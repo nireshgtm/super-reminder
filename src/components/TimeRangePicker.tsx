@@ -1,6 +1,6 @@
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 
-interface TimeValue {
+export interface TimeValue {
   hour: number;   // 0–23
   minute: number; // 0–59
 }
@@ -11,7 +11,7 @@ interface TimeSpinnerProps {
   onChange: (v: TimeValue) => void;
 }
 
-function TimeSpinner({ label, value, onChange }: TimeSpinnerProps) {
+export function TimeSpinner({ label, value, onChange }: TimeSpinnerProps) {
   const { hour, minute } = value;
 
   function adjustHour(delta: number) {

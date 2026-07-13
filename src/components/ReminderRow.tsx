@@ -75,6 +75,7 @@ export function ReminderRow({
     >
       <Pressable
         onPress={() => onPress(reminder.id)}
+        onLongPress={handleDelete}
         style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
         accessibilityRole="button"
         accessibilityLabel={`Reminder: ${text}`}

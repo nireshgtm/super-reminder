@@ -17,14 +17,13 @@ import {
 } from '../services/notificationScheduler';
 import type { RecurrenceConfig } from '../models/RecurrenceConfig';
 import type { Reminder } from '../models/Reminder';
-import {
-  cancelAllScheduledNotificationsAsync,
-  scheduleNotificationAsync,
-  _resetScheduled,
-  _getScheduled,
-} from '../__mocks__/expo-notifications';
+import notifee, {
+  _getTriggerNotifications,
+  _resetTriggerNotifications,
+} from '../__mocks__/@notifee/react-native';
 import { _reset as resetSecureStore, setItemAsync } from '../__mocks__/expo-secure-store';
 import { _clearCacheForTesting } from '../services/secureStore';
+import { _clearSettingsCacheForTesting } from '../services/settings';
 
 // ─── Shared config ────────────────────────────────────────────────────────────
 
@@ -267,9 +266,10 @@ describe('nextFireDates', () => {
 
 describe('rescheduleAll', () => {
   beforeEach(() => {
-    _resetScheduled();
+    _resetTriggerNotifications();
     resetSecureStore();
     _clearCacheForTesting();
+    _clearSettingsCacheForTesting();
   });
 
   function makeReminder(id: string, config: RecurrenceConfig): Reminder {
@@ -305,9 +305,9 @@ describe('rescheduleAll', () => {
 
       await rescheduleAll(reminders);
 
-      const scheduled = _getScheduled();
+      const scheduled = _getTriggerNotifications();
       expect(scheduled.length).toBeLessThanOrEqual(64);
-      expect(cancelAllScheduledNotificationsAsync).toHaveBeenCalledTimes(1);
+      expect(notifee.cancelTriggerNotifications).toHaveBeenCalledTimes(0); // nothing to cancel on first run
     });
 
     it('stays <= 64 with a single reminder whose interval fires hundreds of times in 7 days', async () => {
@@ -324,7 +324,7 @@ describe('rescheduleAll', () => {
       await setItemAsync('single', 'every minute');
       await rescheduleAll([makeReminder('single', config)]);
 
-      expect(_getScheduled().length).toBeLessThanOrEqual(64);
+      expect(_getTriggerNotifications().length).toBeLessThanOrEqual(64);
     });
 
     it('schedules 0 notifications when all reminders are disabled', async () => {
@@ -341,9 +341,9 @@ describe('rescheduleAll', () => {
       const reminder: Reminder = { ...makeReminder('disabled', config), isEnabled: false };
       await rescheduleAll([reminder]);
 
-      expect(_getScheduled().length).toBe(0);
-      // cancelAllScheduledNotificationsAsync still called to clear old state.
-      expect(cancelAllScheduledNotificationsAsync).toHaveBeenCalledTimes(1);
+      expect(_getTriggerNotifications().length).toBe(0);
+      // getTriggerNotifications called to check existing scheduled ones.
+      expect(notifee.getTriggerNotifications).toHaveBeenCalled();
     });
 
     it('proportional allocation: high-frequency reminder gets more slots than low-frequency one', async () => {
@@ -380,9 +380,9 @@ describe('rescheduleAll', () => {
 
       await rescheduleAll(reminders);
 
-      const scheduled = _getScheduled() as Array<{ content: { data: { reminderId: string } } }>;
-      const highCount = scheduled.filter((n) => n.content.data.reminderId === 'high').length;
-      const lowCount = scheduled.filter((n) => n.content.data.reminderId === 'low').length;
+      const scheduled = _getTriggerNotifications() as Array<{ notification: { data: { reminderId: string } } }>;
+      const highCount = scheduled.filter((n) => n.notification.data.reminderId === 'high').length;
+      const lowCount = scheduled.filter((n) => n.notification.data.reminderId === 'low').length;
 
       expect(scheduled.length).toBeLessThanOrEqual(64);
       expect(highCount).toBeGreaterThan(lowCount);

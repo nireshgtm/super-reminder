@@ -45,13 +45,13 @@ For the 09:00–17:00 + 30-min example, 17:00 is **not** scheduled; 16:30 is the
 
 ---
 
-## Notification Strategy (battery-safe, no background timers)
+## Notification Strategy
 
-- **No background services.** All scheduling happens in the foreground on app open.
-- **Rolling-window pre-schedule.** On every app foreground return (and after any reminder edit/save/delete/toggle), the app computes upcoming fire times for each enabled reminder and registers them via `expo-notifications` (`scheduleNotificationAsync` with `DateTriggerInput`).
+- **Scheduling.** On every app foreground return (and after any reminder edit/save/delete/toggle), the app computes upcoming fire times for each enabled reminder and registers them via `@notifee/react-native` (`createTriggerNotification` with a `TimestampTrigger`).
 - **iOS limit:** the system allows ≤ 64 pending local notifications. Slots are distributed proportionally across enabled reminders based on their projected 7-day fire count (see PLAN.md § Slot allocation). Android has no equivalent hard cap.
-- **Refresh trigger:** `AppState` change to `'active'`, reminder save/delete, reminder toggle. No silent push, no background fetch, no background tasks.
-- **Notification payload:** `title` = reminder text or privacy placeholder (see S3), `body` = "Tap to hear", `data.reminderId` = UUID so the app can speak the right text on tap.
+- **Refresh trigger:** `AppState` change to `'active'`, reminder save/delete, reminder toggle.
+- **Notification payload:** `title` = reminder text or privacy placeholder (see S3), `body` = "Tap to hear", `data.reminderId` = UUID, `data.reminderText` = full reminder text (so the background TTS handler can speak it without reading from SecureStore).
+- **Android background delivery:** `@notifee/react-native` fires a headless JS event (`EventType.DELIVERED`) when a trigger notification is delivered — even when the app is killed. The handler in `index.js` speaks the reminder text immediately.
 
 ### DST handling
 Fire times are computed as absolute timestamps from local wall-clock time (JS `Date` with `setHours()`). Because `rescheduleAll` runs on every foreground return, a DST transition that occurs between two app opens may cause the 1–2 notifications scheduled just after the transition to fire at the wrong wall-clock time (off by the DST delta). This is an accepted limitation of the no-background-task design.
@@ -61,9 +61,10 @@ Fire times are computed as absolute timestamps from local wall-clock time (JS `D
 ## Text-to-Speech
 
 - Uses `expo-speech` (`Speech.speak`, `Speech.getAvailableVoicesAsync`) — on-device, no network.
-- Fires when: user taps the OS notification (app opens via `expo-notifications` `lastNotificationResponse`), or user taps a reminder row in the Home list.
+- Fires when: notification arrives (auto-speaks immediately), user taps the OS notification, or user taps a reminder row in the Home list.
 - Voice: chosen per-reminder or from global default. Enumerated via `Speech.getAvailableVoicesAsync()`, filtered to current locale or user-selected language.
-- TTS runs only in foreground. Out of scope v1: speaking while app is locked/backgrounded.
+- **Android**: speaks automatically when a notification fires, even if the app is backgrounded or killed — no tap required. Implemented via `@notifee/react-native` background event handler registered in the app entry point (`index.js`).
+- **iOS**: auto-speaks when the app is in the foreground. When backgrounded or killed, iOS does not allow local notifications to trigger background code (OS limitation); a tap is required.
 
 ---
 
@@ -114,8 +115,23 @@ If the user denies notification permission:
 
 ## Out of Scope — v1
 
-- Speaking while the device is locked or the app is backgrounded.
+- Background auto-speak on iOS (Apple OS limitation for local notifications — implemented on Android).
 - Snooze / dismiss actions on notifications.
 - Widgets, complications, Watch app.
 - Cloud sync or any cloud backend.
 - Siri Shortcuts / Google Assistant integration.
+
+---
+
+## v2 Roadmap (planned, not yet implemented)
+
+| # | Feature | Notes |
+|---|---|---|
+| 1 | **Snooze action on notification** (5 / 10 / 30 min) | notifee action buttons + one-shot reschedule |
+| 2 | **TTS repeat count per reminder** (1–5×) | Short reminders like "Drink Water" can be missed; chaining `speak()` via `onDone` callback solves it |
+| 3 | **TTS speed + pitch control** per reminder | Expose existing `expo-speech` options in the UI |
+| 4 | **Local backup / restore** (encrypted JSON export) | Migrate to a new device without losing reminders |
+| 5 | **Speech-to-text reminder entry** *(optional)* | Mic button on Add/Edit screen; `@react-native-voice/voice`; requires EAS rebuild |
+| 6 | **Long-press to delete** reminder row | Swipe-left delete exists but isn't discoverable; long-press is a familiar complement |
+
+Items 1–4 and 6 require no new native modules. Item 5 requires `@react-native-voice/voice` and an EAS rebuild.

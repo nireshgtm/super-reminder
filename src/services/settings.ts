@@ -5,10 +5,15 @@ const SETTINGS_KEY = '__app_settings__';
 export interface Settings {
   defaultVoiceIdentifier?: string;
   hideTextOnLockScreen: boolean;
+  /** Android: play device default notification sound before TTS. Default true. */
+  beepEnabled: boolean;
+  /** Android: content URI of the custom notification ringtone. undefined = device default. */
+  notificationSoundUri?: string;
 }
 
 const DEFAULTS: Settings = {
   hideTextOnLockScreen: false,
+  beepEnabled: true,
 };
 
 // Module-level cache — invalidated on every saveSettings() call.

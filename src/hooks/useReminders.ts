@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import {
   getAllReminders,
   deleteReminder,
@@ -22,14 +22,24 @@ export interface UseRemindersResult {
 export function useReminders(): UseRemindersResult {
   const [reminders, setReminders] = useState<Reminder[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  // Only show the full-screen spinner on the very first load. Focus-return
+  // reloads (e.g. coming back from Add/Edit or Cancel) update data silently.
+  const initialLoadDone = useRef(false);
 
   const reload = useCallback(async () => {
-    setIsLoading(true);
-    const rows = await getAllReminders();
-    // Warm the text cache for all reminders in parallel (P3).
-    await prefetchTexts(rows.map((r) => r.id));
-    setReminders(rows);
-    setIsLoading(false);
+    const showSpinner = !initialLoadDone.current;
+    if (showSpinner) setIsLoading(true);
+    try {
+      const rows = await getAllReminders();
+      // Warm the text cache for all reminders in parallel (P3).
+      await prefetchTexts(rows.map((r) => r.id));
+      setReminders(rows);
+      initialLoadDone.current = true;
+    } catch (e) {
+      console.error('useReminders: reload failed', e);
+    } finally {
+      if (showSpinner) setIsLoading(false);
+    }
   }, []);
 
   useEffect(() => {

@@ -9,14 +9,16 @@ import {
   ActivityIndicator,
   StyleSheet,
   Alert,
+  Platform,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import * as Speech from 'expo-speech';
+import * as IntentLauncher from 'expo-intent-launcher';
 
 import { getSettings, saveSettings, type Settings } from '../src/services/settings';
 import { useVoices } from '../src/hooks/useVoices';
 import { getAllReminders } from '../src/services/db';
-import { rescheduleAll } from '../src/services/notificationScheduler';
+import { rescheduleAll, applyNotificationSound } from '../src/services/notificationScheduler';
 
 export default function SettingsScreen() {
   const router = useRouter();
@@ -24,6 +26,7 @@ export default function SettingsScreen() {
 
   const [settings, setSettings] = useState<Settings>({
     hideTextOnLockScreen: false,
+    beepEnabled: true,
   });
   const [loading, setLoading] = useState(true);
   const [voiceModalVisible, setVoiceModalVisible] = useState(false);
@@ -47,6 +50,39 @@ export default function SettingsScreen() {
       Alert.alert('Error', 'Could not save settings.');
     }
   }, []);
+
+  // ── Notification sound (Android only) ──────────────────────────────────────
+  async function handleSoundPick() {
+    if (Platform.OS !== 'android') return;
+    let result;
+    try {
+      result = await IntentLauncher.startActivityAsync(
+        'android.intent.action.RINGTONE_PICKER',
+        {
+          extra: {
+            'android.intent.extra.ringtone.TYPE': 2, // TYPE_NOTIFICATION
+            'android.intent.extra.ringtone.SHOW_DEFAULT': true,
+            'android.intent.extra.ringtone.SHOW_SILENT': false,
+            ...(settings.notificationSoundUri
+              ? { 'android.intent.extra.ringtone.EXISTING_URI': settings.notificationSoundUri }
+              : {}),
+          },
+        },
+      );
+    } catch {
+      return; // ringtone picker not available
+    }
+    if (result.resultCode !== -1) return; // user cancelled
+    const uri = result.extra?.['android.intent.extra.ringtone.PICKED_URI'] as string | null | undefined;
+    const newUri = uri ?? undefined;
+    await applyNotificationSound(newUri);
+    applySettings({ ...settings, notificationSoundUri: newUri });
+  }
+
+  async function handleSoundReset() {
+    await applyNotificationSound(undefined);
+    applySettings({ ...settings, notificationSoundUri: undefined });
+  }
 
   // ── Derived label for the selected default voice ─────────────────────────────
   const defaultVoiceName = settings.defaultVoiceIdentifier
@@ -74,6 +110,22 @@ export default function SettingsScreen() {
       <View style={styles.card}>
         <View style={styles.row}>
           <View style={styles.rowContent}>
+            <Text style={styles.rowTitle}>Notification beep</Text>
+            <Text style={styles.rowSub}>
+              Play the device notification sound before speaking the reminder text
+            </Text>
+          </View>
+          <Switch
+            value={settings.beepEnabled}
+            onValueChange={(v) =>
+              applySettings({ ...settings, beepEnabled: v })
+            }
+            accessibilityLabel="Notification beep"
+          />
+        </View>
+        <View style={styles.separator} />
+        <View style={styles.row}>
+          <View style={styles.rowContent}>
             <Text style={styles.rowTitle}>Hide text on lock screen</Text>
             <Text style={styles.rowSub}>
               Show "You have a reminder" instead of your reminder text on lock-screen banners
@@ -87,6 +139,36 @@ export default function SettingsScreen() {
             accessibilityLabel="Hide text on lock screen"
           />
         </View>
+        {Platform.OS === 'android' && (
+          <>
+            <View style={styles.separator} />
+            <Pressable
+              style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
+              onPress={handleSoundPick}
+              accessibilityRole="button"
+              accessibilityLabel="Choose notification sound"
+            >
+              <Text style={styles.rowTitle}>Notification Sound</Text>
+              <View style={styles.rowRight}>
+                <Text style={styles.rowValue}>
+                  {settings.notificationSoundUri ? 'Custom' : 'Default'}
+                </Text>
+                {settings.notificationSoundUri ? (
+                  <Pressable
+                    onPress={handleSoundReset}
+                    hitSlop={8}
+                    accessibilityRole="button"
+                    accessibilityLabel="Reset to default sound"
+                  >
+                    <Text style={styles.resetIcon}>✕</Text>
+                  </Pressable>
+                ) : (
+                  <Text style={styles.chevron}>›</Text>
+                )}
+              </View>
+            </Pressable>
+          </>
+        )}
       </View>
 
       {/* ── Voice section ── */}
@@ -291,6 +373,11 @@ const styles = StyleSheet.create({
   chevron: {
     fontSize: 18,
     color: '#C7C7CC',
+  },
+  resetIcon: {
+    fontSize: 15,
+    color: '#8E8E93',
+    paddingHorizontal: 4,
   },
 
   // Modal

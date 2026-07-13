@@ -38,7 +38,11 @@ export default function HomeScreen() {
       const text = getTextCached(id);
       if (text) {
         const { defaultVoiceIdentifier } = await getSettings();
-        speak(text, reminder.voiceIdentifier ?? defaultVoiceIdentifier);
+        speak(text, reminder.voiceIdentifier ?? defaultVoiceIdentifier, {
+          repeatCount: reminder.repeatCount,
+          rate: reminder.rate,
+          pitch: reminder.pitch,
+        });
       }
     }
     router.push(`/reminder/${id}` as never);

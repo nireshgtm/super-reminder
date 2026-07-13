@@ -1,4 +1,5 @@
 import type { RecurrenceConfig } from '../models/RecurrenceConfig';
+import { isOnceConfig } from '../models/RecurrenceConfig';
 import type { Weekday } from '../models/Weekday';
 
 // ─── Time ─────────────────────────────────────────────────────────────────────
@@ -54,18 +55,33 @@ export function formatDays(activeDays: Weekday[]): string {
   if (setsEqual(set, ALL_DAYS)) return 'Daily';
   if (setsEqual(set, WEEKDAYS)) return 'Weekdays';
   if (setsEqual(set, WEEKENDS)) return 'Weekends';
-  // Preserve canonical order (Mon…Sun)
   const ordered: Weekday[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
   return ordered.filter((d) => set.has(d)).map((d) => WEEKDAY_SHORT[d]).join(', ');
 }
+
+// ─── Month names (for once formatting) ───────────────────────────────────────
+
+const MONTH_SHORT = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+];
 
 // ─── Combined summary ─────────────────────────────────────────────────────────
 
 /**
  * One-line recurrence summary shown in the Home list row.
- * Example: "Every 30 min · 09:00–17:00 · Weekdays"
+ * Recurring:  "Every 30 min · 09:00–17:00 · Weekdays"
+ * One-time:   "Once · Jul 5 · 09:00"
  */
 export function formatRecurrence(config: RecurrenceConfig): string {
+  if (isOnceConfig(config)) {
+    const d = new Date(config.fireAt);
+    const month = MONTH_SHORT[d.getMonth()];
+    const day = d.getDate();
+    const time = formatTime(d.getHours(), d.getMinutes());
+    return `Once · ${month} ${day} · ${time}`;
+  }
+
   const interval = formatInterval(config.intervalValue, config.intervalUnit);
   const window =
     formatTime(config.windowStartHour, config.windowStartMinute) +
