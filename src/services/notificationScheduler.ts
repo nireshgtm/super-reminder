@@ -207,6 +207,14 @@ export async function rescheduleAll(reminders: Reminder[]): Promise<void> {
             ? { visibility: AndroidVisibility.PRIVATE }
             : {}),
         },
+        ios: {
+          sound: beepEnabled ? 'default' : undefined,
+          foregroundPresentationOptions: {
+            alert: true,
+            sound: beepEnabled,
+            badge: false,
+          },
+        },
       },
       trigger,
     );
@@ -257,6 +265,14 @@ export async function rescheduleAll(reminders: Reminder[]): Promise<void> {
             ...(hideTextOnLockScreen
               ? { visibility: AndroidVisibility.PRIVATE }
               : {}),
+          },
+          ios: {
+            sound: beepEnabled ? 'default' : undefined,
+            foregroundPresentationOptions: {
+              alert: true,
+              sound: beepEnabled,
+              badge: false,
+            },
           },
         },
         trigger,

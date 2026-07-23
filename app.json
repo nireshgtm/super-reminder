@@ -15,8 +15,6 @@
       "supportsTablet": false,
       "bundleIdentifier": "com.superreminder.app",
       "infoPlist": {
-        "NSMicrophoneUsageDescription": "Super Reminder uses text-to-speech to read your reminders aloud.",
-        "NSSpeechRecognitionUsageDescription": "Super Reminder uses on-device speech synthesis only.",
         "UIBackgroundModes": [
           "audio"
         ]
