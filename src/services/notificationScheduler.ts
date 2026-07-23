@@ -1,6 +1,8 @@
 import notifee, {
   AndroidImportance,
   AndroidVisibility,
+  AndroidAudioContentType,
+  AndroidAudioUsage,
   AuthorizationStatus,
   TriggerType,
   type TimestampTrigger,
@@ -23,12 +25,19 @@ const CHANNEL_SILENT = 'super-reminder-silent';
 export async function setUpChannels(): Promise<void> {
   if (Platform.OS !== 'android') return;
   const { notificationSoundUri } = await getSettings();
+  // Delete first so audioAttributes changes take effect on existing installs
+  // (Android channels are immutable after creation).
+  await notifee.deleteChannel(CHANNEL_SOUND);
   await notifee.createChannel({
     id: CHANNEL_SOUND,
     name: 'Super Reminder',
     importance: AndroidImportance.HIGH,
     vibration: true,
     vibrationPattern: [0, 250, 250, 250],
+    audioAttributes: {
+      contentType: AndroidAudioContentType.SONIFICATION,
+      usage: AndroidAudioUsage.NOTIFICATION,
+    },
     ...(notificationSoundUri ? { sound: notificationSoundUri } : {}),
   });
   await notifee.createChannel({
@@ -55,6 +64,10 @@ export async function applyNotificationSound(uri?: string): Promise<void> {
     importance: AndroidImportance.HIGH,
     vibration: true,
     vibrationPattern: [0, 250, 250, 250],
+    audioAttributes: {
+      contentType: AndroidAudioContentType.SONIFICATION,
+      usage: AndroidAudioUsage.NOTIFICATION,
+    },
     ...(uri ? { sound: uri } : {}),
   });
 }
